@@ -1,0 +1,149 @@
+方向 B 少样本示例课程设计与实验操作说明
+依据 2026 年 11 月 24 日当前仓库编写
+
+一 研究任务与负责范围
+
+B 同学研究在题目前加入少量已作答示例，是否影响模型的准确率、答案格式和推理开销。先研究示例数量，再固定数量研究顺序，有余力时研究选择方式。每项对照只改变一个主要因素。
+
+代码、配置、示例清单放在 experiments/B_few_shot/。分析、结果表、复现说明放在 analysis/B_few_shot/。原始运行输出按实验分别放在 runs/B_few_shot/ 下。
+
+全组共享模型、固定题单、评分和安装环境。A 负责提示词，B 的正式实验统一使用 STRICT_PROMPT 作为任务指令。正式方案与 evaluate_ceval.py --variant strict-prompt 比较。现有学科角色和仔细思考开关留给相应提示词研究。
+
+二 当前已经具备什么
+
+1. 本机已配置 environment/run.ps1。它读取本机安装记录，调用 D:/Anaconda3/envs/warehouse-gpu/python.exe 和项目内依赖。PyTorch 为 2.11.0+cu128，Transformers 为 4.57.6，使用 RTX 3050 Laptop GPU 和 FP16。换电脑时依该电脑的安装记录执行。
+2. 模型已位于 models/Qwen2.5-0.5B-Instruct/，固定版本为 7ae557604adf67be50417f59c2c2f167def9a775。
+3. 评测题单已固定。data/ceval/questions.jsonl 是题目，answers.jsonl 是评分答案，manifest.json 记录来源、版本和抽样。共 200 题，五科各 40 题，原始来源划分为 test。结果名称使用“C-Eval 本组自选子集”。
+4. data/ceval/few_shot_examples.jsonl 已有 10 道示例，五科各两道，来自同一数据版本的 dev。每科现有示例为题号 0、1，文件保留答案、来源和原文件校验值。
+5. 已有少样本 5 题联调结果，最近一次位于 runs/few-shot-smoke-20261124-155026-670435，答对 3/5，格式有效率 100%。该记录可供学习日志结构。
+6. 当前公共 few-shot 配置固定每科两道示例，使用原始 PROMPT。公共 strict-prompt 配置使用 STRICT_PROMPT。直接比较这两个配置会同时改变任务措辞和示例，B 需要在自己的目录建立采用 STRICT_PROMPT 的实验入口。
+7. 当前 experiments/B_few_shot/ 尚无正式实验代码，runs/B_few_shot/ 尚无完整 200 题少样本结果。下面的操作分为现有入口验收和待实现的 B 实验入口。
+
+三 第一次操作先确认环境和共享基线
+
+在 PowerShell 进入项目根目录，执行下面已有的命令。
+
+Set-Location -LiteralPath 'E:\研一\高级人工智能\大作业选题\big_homework'
+git status --short --branch
+nvidia-smi
+Test-Path .\environment\.runtime\settings.json
+.\environment\run.ps1 evaluate_ceval.py --help
+.\environment\run.ps1 evaluate_ceval.py --variant strict-prompt --smoke --owner 'B姓名'
+
+将 B姓名 换为实际执行人。最后一条命令运行每科一道题，共 5 题。打开终端打印的 runs/strict-prompt-smoke-时间 目录，应看到 config.json、predictions.jsonl 和 summary.json。核对逐题记录恰好 5 条、五个学科各一题、完整输入中正式题无参考答案、设备与精度正确。
+
+若出现 Setup required 或解释器路径失效，按 environment/README.md 修复本机安装记录，再继续。正式实验入口依赖 CUDA。GPU 实验按组内时间排队执行。
+
+可用以下现有命令观察示例怎样进入提示词。
+
+.\environment\run.ps1 evaluate_ceval.py --variant few-shot --smoke --owner 'B姓名'
+
+打开新运行的 predictions.jsonl，检查 input 中的示例1、示例2和末尾正式题。这个命令用于理解已有的两示例实现。它使用原始提示措辞，后续受控实验采用第四步说明的 B 独立入口。
+
+四 核对示例并建立自己的配置
+
+先阅读 data/ceval/few_shot_examples.jsonl。每条示例核对 subject、split、id、question、choices、answer、dataset_revision、source_url 和 source_sha256。题号需要结合学科与划分理解。
+
+将固定示例清单复制到 experiments/B_few_shot/examples.jsonl，作为 B 的实验输入，并在配置中登记校验值。评测题和评分答案沿用 data/ceval/ 下的共享文件。
+
+验证示例题干与全部 200 道正式题无重复。当前公共 load_examples 已用 NFKC 规范化和去除空白后的题干进行排重，并检查每科两题、来源划分、版本和答案。数量实验可以先加载并校验现有两题候选集，再根据实验配置取前一道或两道。
+
+现有 prepare_few_shot_examples.py 能从固定版本的原始 dev 文件重新生成公共示例清单。源文件缺失时它会联网下载，且会重写公共示例文件。B 的正式工作使用复制到专属目录的清单；需要扩展候选池时，在 experiments/B_few_shot/ 编写自己的准备脚本，记录完整选取规则。
+
+建议 B 自己建立如下文件。
+
+experiments/B_few_shot/
+    examples.jsonl             固定的候选示例和来源
+    configs.json               实验编号、数量和顺序
+    run_experiment.py          B 的推理与记录入口
+analysis/B_few_shot/
+    results.json               小型汇总表
+    cases.txt                  具体题目的对照分析
+    reproduction.txt           另一组员复现的配置和结果位置
+runs/B_few_shot/
+    实验编号-时间/             每次运行的原始记录
+
+这些是接下来由 B 实现的文件接口。当前课程说明仅规定操作与验收步骤。
+
+五 先写清实验矩阵
+
+建议先完成以下四个配置，每个正式配置均跑固定的全部 200 题。
+
+B0    0 道示例    严格任务指令加正式题
+B1    1 道示例    每科候选集的第 1 道
+B2    2 道示例    每科候选集按原始顺序排列
+B3    2 道示例    使用 B2 完全相同的两题，顺序反转
+
+B0、B1、B2 用于数量分析。B2、B3 用于顺序分析。B1 使用 B2 的第一道题，可以说明增加第二道固定示例的影响。这个设计的结论限于选定示例内容。
+
+B0 对齐公共 strict-prompt 的指令、模板、解码和评分。B0 的实际输入应逐题等于共享基线输入。先用 5 题核验这一点，再做正式运行。已有共享基线可以复用，但须核对设备、环境、生成配置、题单校验值和计时口径；在自己的正式实验前复跑一次，更便于交叉验证。
+
+有余力时增加 B4。在同样的合格 dev 候选池中以固定种子选两题，再按题号排序，与 B2 比较选择方式。种子可设为 20261123，选择结果对同科全部评测题固定。记录候选池、抽取结果和种子。候选少于所需数量时调整计划并记录原因。若做多个种子，汇报全部结果、均值和波动。
+
+六 实现 B 独立入口时具体做什么
+
+run_experiment.py 复用公共模块中的 STRICT_PROMPT、build_prompt、read_jsonl、key、ANSWER、summarize，以及 qwen_smoke_test.py 的 generate。加载模型和 tokenizer 的方式参考公共入口，模型在一个运行进程中只加载一次。脚本位于子目录时，需要将项目根路径加入模块搜索路径，或者用明确的模块加载方式导入公共模块。
+
+公共 load_examples 当前要求每科恰好两道。可用它验证自己的两题候选清单，然后按配置切片和反转。B4 扩大候选池时，在 B 目录完成对应的完整性、来源和排重校验。
+
+一题的执行顺序如下。
+读取正式题和学科。
+按实验配置选择该科示例列表。
+调用 build_prompt，将 STRICT_PROMPT、正式题和示例列表拼起来。
+使用同一对话模板生成完整输入并保存。
+调用 generate 获得原始回答和计时、长度、显存记录。
+使用 ANSWER.fullmatch(raw.strip()) 提取最终选项。
+从评分答案文件读取该题参考答案，计算得分并保存。
+
+build_prompt 会把每个示例拼成“题干、四个选项、最终答案”，正式题放在最后。示例答案可以进入模型上下文，正式题参考答案只用于评分。本轮固定示例只提供最终选项，以便控制输入内容。
+
+沿用当前生成配置，包括 FP16、do_sample=False、max_new_tokens=64、模型版本和随机种子。计时采用公共 generate 的分词到解码范围，并记录未预热的口径。调用次数在这组设计中为每题一次。
+
+建议给 B 入口实现 --config、--smoke、--owner 参数。它们属于待实现的 B 入口，公共 evaluate_ceval.py 当前没有 --config 参数。B 入口实现后，下面的命令才可执行。
+
+.\environment\run.ps1 experiments/B_few_shot/run_experiment.py --config B0 --smoke --owner 'B姓名'
+.\environment\run.ps1 experiments/B_few_shot/run_experiment.py --config B2 --smoke --owner 'B姓名'
+
+七 逐项验收后再跑正式题单
+
+每个配置先用每科一道题的同一份 5 题子集联调。
+B0 的完整输入与公共严格基线逐题一致。
+B1 每题恰好包含一道同科示例。
+B2 每题两道示例，顺序与配置清单一致。
+B3 使用与 B2 相同的题号和内容，仅交换顺序。
+每个运行均有 5 条原始记录和可由记录重新计算的汇总。
+评分正则和对无效回答的处理与共享基线一致。
+
+通过后按 B0、B1、B2、B3 的顺序逐个运行，去掉 --smoke。每次输出到独立的 runs/B_few_shot/实验编号-时间/。在 configs.json 中先确定参数，修改方案时新建实验编号，并保留修改原因。
+
+每个正式运行的 config.json 至少记录执行人、实验编号、代码 commit、公共模块与 B 脚本的校验值、题单与示例文件校验值、基线运行编号、逐科示例题号及顺序、生成配置、设备、线程和时间范围。配置中的 commit 对应已提交代码，额外校验值便于核对运行文件。
+
+predictions.jsonl 保存学科、划分、题号、完整输入、原始输出、提取答案、参考答案、得分、耗时、输出 token 数和异常状态。建议同时保存该题使用的示例编号和输入 token 数。
+
+summary.json 汇总全部 200 题及分学科结果。无法解析的题计错并计入 200 的分母，达到长度上限的回答保留评分。系统故障时保留部分日志，按统一规则重跑并记录原因。
+
+八 分析结果与编写课程报告
+
+先完成一张表，列出实验编号、示例数量、选择方式、顺序、总体准确率、各科准确率、格式有效率、截断率、调用次数、总耗时、平均单题耗时、平均输出 token 数和显存峰值。加入输入 token 数时要说明统计位置和口径。
+
+数量分析分别查看 B0、B1、B2 的变化。顺序分析只比较 B2 和 B3。增加了调用或输入开销时把收益和代价放在一起分析。单次 200 题结果有波动，提升的结论限定在本组固定子集和所选示例。
+
+按学科、来源划分和题号配对逐题输出，统计答错变对、答对变错、格式无效变有效。挑选具体题目，展示问题、示例来源、两种原始回答和评分结果，解释变化可能来自格式模仿、知识提示或干扰。全组最终报告至少五个不同题目的错误案例，B 提供自己方向中有代表性的案例供小组整合。
+
+可以用以下提纲写 B 的分析稿。
+研究问题与假设。
+示例来源、选择规则及与正式题排重的方式。
+固定因素与实验矩阵。
+实际结果表、逐题变化和计算开销。
+代表性案例、负结果、局限与后续验证。
+另一位组员的复现记录。
+
+九 协作与交付
+
+正常开发从团队最新 main 建立 exp/b/few-shot 等 B 实验分支。代码和分析限定在 B 的两个专属目录内，使用现有环境和公共评分。实际运行日志留在 runs/B_few_shot/，在分析中登记完整路径。
+
+正式运行前提交本次代码、配置和小型示例清单。按路径暂存 experiments/B_few_shot/ 和 analysis/B_few_shot/，用 environment/run.ps1 tools/check_repo.py --staged 检查，完成组内审核流程。公共接口遇到缺口时，具体登记缺少的能力，再依 README.md 的公共变更流程处理。
+
+B 最终交付自己的代码、示例及来源、配置、基线与各方案结果、运行命令、典型案例、真实贡献和交叉复现记录。示例数量、顺序、选择方式可以分阶段推进，本说明推荐数量为主线、顺序为扩展，B4 为可选研究。
+
+本说明基于读取当前仓库编写。文中记录的少样本结果来自已有 5 题日志，本次编写期间未执行新的模型评测。B 独立实验入口和完整正式矩阵由负责同学按本说明实现与运行。
