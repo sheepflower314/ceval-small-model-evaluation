@@ -1,0 +1,61 @@
+方向 D 多次生成与答案选择课程设计说明
+
+任务
+在固定的 C-Eval 本组 200 题上，用 Qwen2.5-0.5B-Instruct 对每道题独立生成 5 次，按票数选出一个最终答案。实验要回答两个问题。投票比同参数的单次采样多答对多少题？多次生成增加了多少耗时与调用次数？
+
+一  从已安装环境开始
+
+在 Windows PowerShell 打开项目根目录，运行以下两条现有命令。
+
+    .\environment\run.ps1
+    .\environment\run.ps1 evaluate_ceval.py --variant strict-prompt --smoke
+
+第一条检查模型能否正常推理，第二条用正式题单每科一道题验收 CUDA、数据读取与评分。当前项目运行器已配置 warehouse-gpu 和 CUDA。组员使用自己安装时生成的配置即可。正式对照在同一台有 CUDA 的机器完成。
+
+提交时使用方向分支 exp/d/vote。实验代码放入 experiments/D_multi_generation，分析与复现说明放入 analysis/D_multi_generation，原始运行记录写入 runs/D_multi_generation 下各自的运行目录。分支与提交要求见根目录 README.md 和 skills/ceval-team-workflow/SKILL.md。
+
+二  确定对照和投票规则
+
+三组共用同一个模型版本、固定 200 题、strict-prompt 的原始措辞和现有评分规则。生成上限沿用 64 个新 token。每道题使用该题自身的题干和选项作为输入。
+
+1. 共用基线，沿用 strict-prompt，贪心解码，每题调用一次。
+2. 单次采样，每题使用第 1 次采样的答案，与投票组共享这次生成。
+3. 五次采样投票，每题使用全部 5 次采样的答案进行投票。
+
+推荐第一轮固定 temperature=0.7、top_p=0.9、top_k=None，启用 do_sample=True，运行开始设随机种子 20261123，随后让随机状态随各次生成推进。固定题目顺序和运行环境，并记录实际参数。例题联调结束后锁定配置，再运行正式题单。
+
+投票由代码自动完成。每次输出先按共用规则提取唯一选项。无法提取的输出弃票。有效选项中票数最多者胜出。平票时，在最高票选项中选最早出现的一个。五次均无有效输出时标记格式无效并计错，该题保留在 200 题分母中。
+
+示例说明。5 次解析结果为 A、C、C、无效、A。A 和 C 各 2 票，A 最早出现，所以最终选 A。
+
+三  在 D 的目录里实现入口
+
+建议新建 experiments/D_multi_generation/evaluate_vote.py。先实现 --smoke 和 --owner 两个参数，再按以下顺序处理。
+
+1. 复用 evaluate_ceval.py 的 STRICT_PROMPT、build_prompt、ANSWER、key 和 read_jsonl，按 manifest.json 的顺序读取 questions.jsonl，同一进程加载一次本地模型和 tokenizer。现有 qwen_smoke_test.py 的 generate 固定关闭采样，可参考其对话模板和计时方式，在 D 的脚本中实现带采样参数的生成。
+2. 对每道题，用同一份提示调用模型 5 次。先保存每次的原始输出、提取选项、生成 token 数、耗时和异常状态。单次采样结果取第 1 次，五次投票结果由第 2 节规则计算，两者分别保存。
+3. 模型生成和投票结束后，用 subject、split、id 对应 answers.jsonl 中的参考答案，再对两个结果分别评分。参考答案只参与这一步。
+4. 在 runs/D_multi_generation 下创建本次运行目录。config.json 保存执行人、代码版本、基线运行编号、模型与题单版本、全部采样参数和投票规则。predictions.jsonl 每行保存一道题的完整输入、5 次原始输出、票数、最终选择、参考答案和两组评分。summary.json 保存两组总体与分科汇总。
+
+四  先验收 5 题再做正式实验
+
+以下两条是脚本实现之后的运行命令。当前仓库中的 D 实验目录已建立，evaluate_vote.py 由方向 D 组员按上一步实现。
+
+    .\environment\run.ps1 -m experiments.D_multi_generation.evaluate_vote --smoke --owner "你的姓名"
+    .\environment\run.ps1 -m experiments.D_multi_generation.evaluate_vote --owner "你的姓名"
+
+先在试跑日志中确认每科 1 题，每题有 5 条原始输出，共 25 次生成，且第 1 次结果和单次采样列一致。用手工构造的选项序列核对普通投票、平票、部分弃票和全弃票。生成结果碰巧相同可以保留，检查实际配置确实启用了采样。
+
+试跑通过后，在同一台机器跑正式 strict-prompt 和 D 的完整实验。
+
+    .\environment\run.ps1 evaluate_ceval.py --variant strict-prompt --owner "你的姓名"
+
+然后运行上述不带 --smoke 的 D 命令，并把同机 strict-prompt 运行编号写入 D 的配置。检查三组各覆盖同一份 200 题，预期调用数依次为 200、200、1000。单次采样组的 200 次已经包含在投票组的 1000 次内，汇报实际采样运行成本时只计一次。
+
+五  分析与交付
+
+用一张表记录三组的总体准确率、分科准确率、最终答案格式有效率、总调用次数、总耗时、平均每题耗时、生成 token 数和显存峰值。为各组统一计时范围，区分模型加载与推理耗时。单次采样用每题首次调用的记录汇总，五次投票用五次调用及聚合的累计耗时。另记五次采样中有效单次输出的占比，帮助解释弃票。
+
+先比较单次采样与五次投票，回答聚合是否有收益。再比较五次投票与贪心基线，说明整个方案的实际得分和代价。选出有代表性的答错变对、答对变错或弃票案例，给出原始回答、票数和结果。效果持平或下降也照实记录。
+
+交付实验脚本、固定配置、复跑命令和对照分析。原始运行记录留在 runs/D_multi_generation，分析中注明对应运行编号和存放位置。请另一位组员按说明复跑一项关键实验，并登记复现结果。
