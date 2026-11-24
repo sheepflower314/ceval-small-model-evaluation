@@ -1,6 +1,16 @@
 # C-Eval 小语言模型组内评测
 
-四个方向共用固定的 C-Eval 本组自选子集、Qwen2.5-0.5B-Instruct 和评分协议。共用入口是 `evaluate_ceval.py`，正式对照显式使用严格输出基线 `--variant strict-prompt`。四位成员分别维护下列目录。
+四个方向共用固定的 C-Eval 本组自选子集、Qwen2.5-0.5B-Instruct 和评分协议。共用入口是 `evaluate_ceval.py`，正式对照显式使用严格输出基线 `--variant strict-prompt`。
+
+## Fork 后快速安装环境
+
+把自己的 Fork 克隆到 Windows 电脑，用 AI 助手打开项目根目录，然后复制整句：
+
+> 在项目根目录按 `environment/README.md` 直接执行安装脚本，先检查本机的 64 位 Python 3.11 和 PyTorch 并优先复用可用环境，必要时在项目内新建环境并下载、校验模型，没有可用 CUDA 时用 CPU 模式，安装后运行 `.\environment\run.ps1` 验证中文推理，有 CUDA 时再运行 `.\environment\run.ps1 evaluate_ceval.py --variant strict-prompt --smoke` 完成 C-Eval 5 题验收，最后报告安装位置、实际设备和验收结果。
+
+首次安装需要联网。手动操作或排查问题请看 [运行环境安装说明](environment/README.md)。
+
+## 实验方向
 
 | 方向 | 实验代码与配置 | 结果分析与复现记录 | 分支示例 |
 |---|---|---|---|
