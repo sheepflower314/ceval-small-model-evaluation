@@ -1,0 +1,100 @@
+方向 C 自检与修正课程设计说明
+依据 2026 年 11 月 24 日的项目文件编写
+
+一 实验要回答的问题
+
+同一个 Qwen 模型回答一道四选一题后，如果再让它看一遍原题和自己的初答，它能纠正多少错误，又会把多少正确答案改错？C 同学负责实现这次额外调用，再用全组统一的评分规则比较初答和自检结果。
+
+模型自检时收到原题、四个选项和自己的原始初答。C-Eval 参考答案在生成结束后用于评分。例如，模型初答 A、自检后改为 C，评分端查到参考答案为 C，就记为“答错变对”。
+
+本方向使用原始的严格答题指令生成初答，沿用全组的 strict-prompt 共享基线。A 的逐项核对或学科角色、B 的少样本示例、D 的多次采样与投票各有独立实验。C 在初答之后增加一次有明确输入的自检。
+
+二 当前已经具备什么
+
+• Windows 环境已安装。本机可以通过 environment/run.ps1 调用本机配置的 Python、PyTorch 和 Transformers。当前已验证的运行设备是 RTX 3050 Laptop GPU，正式评测使用 CUDA 和 FP16。组员用各自电脑的安装记录运行，CPU 环境可先验证模型，正式对照用同一台 CUDA 电脑完成。
+• 模型为 Qwen2.5-0.5B-Instruct，项目固定版本为 7ae557604adf67be50417f59c2c2f167def9a775。200 道正式题和评分答案已经固定，五科各 40 题，位于 data/ceval/。
+• 共享评测入口 evaluate_ceval.py 已能生成、评分和保存日志。已有严格基线 runs/strict-prompt-20261124-142348-221686，在固定 200 题上答对 72 题，准确率 36%，格式有效率 99.5%。这个目录是本机已有的参考记录，复用前核对设备、题单、提示及生成配置。
+• C 的代码、输出和分析目录已建好。当前没有 C 的两阶段评测入口或 200 题自检结果。先执行下面已有的验收命令，再按第四节实现 C 的入口。
+
+三 用现有环境先跑通一题自检
+
+1. 在自己的项目根目录打开 PowerShell。检查本机安装记录，然后跑共享严格基线的 5 题试跑。
+
+git status --short --branch
+Test-Path .\environment\.runtime\settings.json
+.\environment\run.ps1 evaluate_ceval.py --variant strict-prompt --smoke --owner "实际执行人"
+
+把“实际执行人”换成自己的姓名。安装记录应返回 True。正式入口需要 CUDA，模型或解释器路径失效时按 environment/README.md 修复对应配置。记下终端打印的本次 runs/strict-prompt-smoke-时间 目录，检查其中有 config.json、predictions.jsonl 和 summary.json，逐题日志共 5 条。
+
+2. 在同一个 PowerShell 窗口粘贴下面整段。运行到提示时，把上一步打印的运行目录粘贴进去。它会用第一条试跑记录的题目和原始初答完成一次自检。
+
+$run = Read-Host '粘贴刚才 5 题试跑的完整目录路径'
+$first = Get-Content -LiteralPath (Join-Path $run 'predictions.jsonl') -Encoding UTF8 -TotalCount 1 |
+    ConvertFrom-Json
+$question = Get-Content -LiteralPath '.\data\ceval\questions.jsonl' -Encoding UTF8 |
+    ForEach-Object { $_ | ConvertFrom-Json } |
+    Where-Object {
+        $_.subject -eq $first.subject -and $_.split -eq $first.split -and $_.id -eq $first.id
+    }
+if (@($question).Count -ne 1) { throw '正式题未唯一匹配' }
+$reviewPrompt = @"
+请重新阅读题目，核对你先前的回答。确认正确就保留，有误就修改。
+只输出一行，格式为“最终答案：X”，X 必须是 A、B、C、D 之一，选项后不加文字或标点。
+
+$($question.question)
+A. $($question.choices.A)
+B. $($question.choices.B)
+C. $($question.choices.C)
+D. $($question.choices.D)
+
+你的初答如下
+$($first.output)
+"@
+$first.output
+.\environment\run.ps1 qwen_smoke_test.py --device cuda --prompt $reviewPrompt
+
+先看终端中的初答和自检输出，再查看该题日志的 reference 字段判断是否改对。这个命令是单题演示，正式结果需要由 C 的入口逐题保存。初答相同、改错或格式无效也都是有效的观察记录。
+
+四 实现 C 的独立实验入口
+
+在自己的克隆中，从团队最新的 main 建立 exp/c/self-check 分支。在 experiments/C_self_check/ 编写 run_experiment.py 和自检配置。分析放在 analysis/C_self_check/，原始日志放在 runs/C_self_check/ 的独立运行目录。公共代码或评分规则的问题记录下来，按项目 README 的公共变更流程处理。
+
+可导入 evaluate_ceval.py 的 STRICT_PROMPT、build_prompt、read_jsonl、key 和 ANSWER，复用 qwen_smoke_test.py 的 generate。子目录脚本导入时可用 Path(__file__).resolve().parents[2] 得到项目根目录，再加入 Python 模块搜索路径。模型和 tokenizer 在一次评测进程中加载一次，复用现有对话模板、CUDA FP16 和固定模型版本。按共享设置使用 do_sample=False、max_new_tokens=64 和题单清单中的种子。
+
+每题的执行顺序如下。
+
+1. 用 build_prompt(STRICT_PROMPT, row) 构造第一阶段输入，调用 generate，保存完整输入、原始初答和耗时。使用共享严格基线的纯配置。
+2. 按第三节的模板，把题干、四个选项和原始初答拼成第二阶段输入，再调用同一个模型一次。全部题都执行自检，包括初答正确、错误或格式无效的题。保留第二次原始输出和耗时。
+3. 生成结束后，用 subject、split、id 匹配参考答案。对初答与自检结果分别应用 ANSWER.fullmatch(raw.strip())，提取选项后评分。无法提取时记 parse_failed 和 0 分，题目仍计入分母。达到生成长度上限的回答保留并按原规则评分。
+4. 将两阶段结果放在同一道题的日志中。记录完整的对话模板输入、原始输出、提取选项、参考答案、各阶段的得分、耗时、输出 token 数、显存峰值和异常状态。评分用的是共享规则。现有 summarize 按每题一次调用计数，自检汇总需根据两阶段记录计算调用次数与累计耗时。
+
+用同一次运行保存的初答作为 C0，用对应的自检结果作为 C1，两者逐题配对。
+
+配置     自检次数    评分用的输出    200 题的配置调用次数
+C0       0           第一次输出      200
+C1       1           第二次输出      400
+
+在配对运行里每题实际生成两次，全程共有 400 次调用。C0 的耗时取第一阶段，C1 的耗时取两阶段之和。计时沿用共享 generate 的分词到解码口径，模型加载时间单独记录即可。先完成 0 次与 1 次的比较，小组如选择研究自检次数，再加入两次自检，从上一次作答继续核对。
+
+五 先验收 5 题，再跑正式 200 题
+
+建议给 C 的入口实现 --smoke 和 --owner。以下是入口实现后的运行命令。
+
+.\environment\run.ps1 experiments/C_self_check/run_experiment.py --smoke --owner "实际执行人"
+.\environment\run.ps1 experiments/C_self_check/run_experiment.py --owner "实际执行人"
+
+先执行第一条，用和共享基线试跑相同的五科各一道题。打开日志逐项核对。
+
+• 共有 5 条逐题记录，题号能与共享试跑一一匹配；第一阶段的完整提示与相同题的严格基线一致。
+• 每题都有两阶段调用记录。第二阶段输入中的初答与第一阶段原始输出一致，参考答案只出现在评分记录里。
+• 能从逐题记录重算 C0、C1 的得分、格式有效率和耗时。试跑阶段只验证流程。
+
+检查通过后固定自检提示和配置，执行第二条，使用同一份正式 200 题。保存 config.json、predictions.jsonl 和 summary.json，并记录运行人、实验编号、命令、代码提交号、题单校验值、模型版本、设备、精度、生成参数、完整自检提示和计时口径。逐题日志应有 200 条配对记录。系统故障时保留已有日志，按相同配置完整重跑并记录原因。
+
+六 写分析和交付
+
+对 C0、C1 各列一行，报告总体和各科准确率、格式有效率、调用次数、总耗时、平均每题耗时和输出长度。用同一题的初答和自检答案统计答错变对、答对变错、两次都对、两次都错。另按格式有效性统计变化，以区分恢复输出格式和改换选项。可用“改对题数减改错题数”检查总体正确题数的变化。
+
+选出几道代表性题目，列出题号、题意、初答、自检后的原始输出和评分结果，解释哪类题可能受益、哪些题变差。准确率持平或下降同样如实报告，结论限定在本组固定子集和本次自检提示。案例可纳入小组报告要求的至少五道代表性错误题。
+
+最终提交 C 的代码、配置、运行命令、对照结果、典型案例和交叉复现记录。原始日志保存在 runs/C_self_check/ 或团队共享存储，在分析中注明运行编号及位置。代码、配置和小型分析按项目 README 的分支、检查和 PR 流程提交。完成后安排另一位组员按说明复现关键实验。
