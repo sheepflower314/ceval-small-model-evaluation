@@ -1,0 +1,5 @@
+{
+  "self_check_instruction": "请重新阅读题目，核对你先前的回答。确认正确就保留，有误就修改。只输出一行，格式为“最终答案：X”，X 必须是 A、B、C、D 之一，选项后不加文字或标点。",
+  "max_new_tokens": 64,
+  "do_sample": false
+}
