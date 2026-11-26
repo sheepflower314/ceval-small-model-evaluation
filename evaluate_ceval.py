@@ -84,7 +84,11 @@ def summarize(rows):
         "calls": n, "total_seconds": round(seconds, 4),
         "mean_seconds": round(seconds / n, 4),
         "mean_generated_tokens": sum(row["generated_tokens"] for row in rows) / n,
-        "peak_cuda_allocated_mib": max(row["peak_cuda_allocated_mib"] for row in rows),
+        "peak_cuda_allocated_mib": max(
+            (row["peak_cuda_allocated_mib"] for row in rows
+             if "peak_cuda_allocated_mib" in row),
+            default=None,
+        ),
     }
 
 
@@ -92,6 +96,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--owner", default=None)
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     instructions = {
         "baseline": PROMPT,
         "strict-prompt": STRICT_PROMPT,
@@ -132,12 +137,18 @@ def main():
         role_prefixes = {subject: f"你是一名{SUBJECT_ROLES[subject]}。" for subject in subjects}
     if args.smoke:
         questions = list({row["subject"]: row for row in reversed(questions)}.values())
+    device = args.device
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda" and not torch.cuda.is_available():
+        parser.error("CUDA is unavailable in this PyTorch environment.")
+    dtype = torch.float16 if device == "cuda" else torch.float32
     torch.manual_seed(manifest["seed"])
     model_dir = ROOT / "models" / "Qwen2.5-0.5B-Instruct"
     tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True)
     model = AutoModelForCausalLM.from_pretrained(
-        model_dir, dtype=torch.float16, local_files_only=True, use_safetensors=True,
-    ).to("cuda").eval()
+        model_dir, dtype=dtype, local_files_only=True, use_safetensors=True,
+    ).to(device).eval()
     git = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True,
     )
@@ -160,7 +171,8 @@ def main():
         "dataset_sha256": {name: hashlib.sha256((data / name).read_bytes()).hexdigest()
                            for name in ("manifest.json", "questions.jsonl", "answers.jsonl")},
         "torch": str(torch.__version__), "transformers": transformers.__version__,
-        "device": torch.cuda.get_device_name(), "dtype": "float16",
+        "device": torch.cuda.get_device_name() if device == "cuda" else device,
+        "device_type": device, "dtype": str(dtype).removeprefix("torch."),
         "threads": torch.get_num_threads(), "interop_threads": torch.get_num_interop_threads(),
         "prompt": prompt_instruction, "answer_regex": ANSWER.pattern, "do_sample": False,
         "max_new_tokens": 64, "timing": "Tokenization through decoding; no warm-up.",
@@ -188,7 +200,7 @@ def main():
             prompt = build_prompt(instruction, row, examples_by_subject.get(subject, ()))
             messages = [{"role": "user", "content": prompt}]
             rendered = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            raw, metrics = generate(model, tokenizer, "cuda", prompt)
+            raw, metrics = generate(model, tokenizer, device, prompt)
             match = ANSWER.fullmatch(raw.strip())
             prediction = match[1] if match else None
             reference = answers[key(row)]
